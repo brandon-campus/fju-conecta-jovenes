@@ -12,12 +12,13 @@ const Inicio = () => {
   const shortcuts = [
     { label: 'Registrar joven', icon: UserPlus, path: '/registro', roles: ['asistente', 'coordinador'] },
     { label: 'Tomar asistencia', icon: CheckSquare, path: '/asistencia', roles: ['lider', 'coordinador'] },
-    { label: 'Ver dashboard', icon: BarChart3, path: '/dashboard', roles: ['coordinador'] },
+    { label: 'Mi Tribu', icon: UserPlus, path: '/tribu', roles: ['lider', 'coordinador'] },
+    { label: 'Ver dashboard', icon: BarChart3, path: '/dashboard', roles: ['asistente', 'lider', 'coordinador'] },
     { label: 'Actividades', icon: Settings, path: '/actividades', roles: ['coordinador'] },
   ].filter(s => s.roles.includes(role));
 
   return (
-    <div className="animate-fade-in px-4 pb-24 pt-6">
+    <div className="animate-fade-in px-4 pb-24 md:pb-8 pt-6 md:pt-10">
       <div className="mb-6">
         <p className="text-sm text-muted-foreground">Bienvenido/a</p>
         <h1 className="text-2xl font-bold text-foreground">FJU Argentina</h1>
@@ -26,7 +27,7 @@ const Inicio = () => {
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6">
         {shortcuts.map(s => (
           <button
             key={s.path}

@@ -1,24 +1,67 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Users, Sparkles, AlertTriangle, ClipboardList, X } from 'lucide-react';
-import { mockJovenes, mockHistorialAsistencia } from '@/lib/mockData';
+import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
-const metrics = [
-  { label: 'Total jóvenes registrados', value: 116, icon: Users, color: 'text-primary' },
-  { label: 'Nuevos este mes', value: 14, icon: Sparkles, color: 'text-accent' },
-  { label: 'Solo vinieron 1 vez', value: 23, icon: AlertTriangle, color: 'text-destructive' },
-  { label: 'Asistencias este mes', value: 187, icon: ClipboardList, color: 'text-success' },
-];
+type Joven = { id: string; nombre: string; apellido: string; edad: number; fecha_registro: string; direccion: string; whatsapp: string; redes_sociales: string; totalAsistencias?: number };
+type Asistencia = { joven_id: string; actividad_id: string; fecha: string };
+type Actividad = { id: string; nombre: string };
 
 const Dashboard = () => {
-  const [selectedJoven, setSelectedJoven] = useState<typeof mockJovenes[0] | null>(null);
+  const [jovenes, setJovenes] = useState<Joven[]>([]);
+  const [asistencias, setAsistencias] = useState<Asistencia[]>([]);
+  const [actividades, setActividades] = useState<Actividad[]>([]);
+  const [selectedJoven, setSelectedJoven] = useState<Joven | null>(null);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const [resJovenes, resAsistencias, resActividades] = await Promise.all([
+        supabase.from('jovenes').select('*'),
+        supabase.from('asistencias').select('*'),
+        supabase.from('actividades').select('id, nombre')
+      ]);
+
+      if (resJovenes.data) setJovenes(resJovenes.data);
+      if (resAsistencias.data) setAsistencias(resAsistencias.data);
+      if (resActividades.data) setActividades(resActividades.data);
+    };
+    fetchData();
+  }, []);
+
+  const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+  
+  const nuevosEsteMes = jovenes.filter(j => j.fecha_registro?.startsWith(currentMonth)).length;
+  const asistenciasEsteMes = asistencias.filter(a => a.fecha?.startsWith(currentMonth)).length;
+
+  const asisPorJoven = asistencias.reduce((acc, curr) => {
+    acc[curr.joven_id] = (acc[curr.joven_id] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  const vinieronUnaVez = Object.values(asisPorJoven).filter(count => count === 1).length;
+
+  const metrics = [
+    { label: 'Total jóvenes registrados', value: jovenes.length, icon: Users, color: 'text-primary' },
+    { label: 'Nuevos este mes', value: nuevosEsteMes, icon: Sparkles, color: 'text-accent' },
+    { label: 'Solo vinieron 1 vez', value: vinieronUnaVez, icon: AlertTriangle, color: 'text-destructive' },
+    { label: 'Asistencias este mes', value: asistenciasEsteMes, icon: ClipboardList, color: 'text-success' },
+  ];
+
+  const jovenesConAsistencia = jovenes.map(j => ({ ...j, totalAsistencias: asisPorJoven[j.id] || 0 })).sort((a,b) => (b.totalAsistencias || 0) - (a.totalAsistencias || 0));
+
+  const historialSeleccionado = selectedJoven 
+    ? asistencias.filter(a => a.joven_id === selectedJoven.id).sort((a,b) => b.fecha.localeCompare(a.fecha))
+    : [];
+
+  const getActividadNombre = (id: string) => actividades.find(a => a.id === id)?.nombre || 'Desconocida';
 
   return (
-    <div className="animate-fade-in px-4 pb-24 pt-6">
+    <div className="animate-fade-in px-4 pb-24 md:pb-8 pt-6 md:pt-10">
       <h1 className="mb-4 text-xl font-bold text-foreground">Dashboard</h1>
 
       {/* Metrics */}
-      <div className="mb-6 grid grid-cols-2 gap-3">
+      <div className="mb-6 grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
         {metrics.map(m => (
           <div key={m.label} className="rounded-xl border border-border bg-card p-4 shadow-sm">
             <m.icon size={20} className={m.color} />
@@ -40,7 +83,7 @@ const Dashboard = () => {
               </tr>
             </thead>
             <tbody>
-              {mockJovenes.map(j => (
+              {jovenesConAsistencia.map((j) => (
                 <tr
                   key={j.id}
                   onClick={() => setSelectedJoven(j)}
@@ -57,59 +100,60 @@ const Dashboard = () => {
       </div>
 
       {/* Profile modal */}
-      {selectedJoven && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-foreground/40 sm:items-center" onClick={() => setSelectedJoven(null)}>
-          <div
-            className="w-full max-w-md animate-fade-in rounded-t-2xl bg-background p-5 shadow-xl sm:rounded-2xl"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-bold text-foreground">Perfil del joven</h2>
-              <Button variant="ghost" size="icon" onClick={() => setSelectedJoven(null)}>
-                <X size={20} />
-              </Button>
-            </div>
+      <Dialog open={!!selectedJoven} onOpenChange={(open) => !open && setSelectedJoven(null)}>
+        <DialogContent className="w-[calc(100%-2rem)] max-w-md rounded-2xl gap-4 p-5">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold">Perfil del joven</DialogTitle>
+          </DialogHeader>
 
-            <div className="mb-4 space-y-2 text-sm">
-              <InfoRow label="Nombre completo" value={`${selectedJoven.nombre} ${selectedJoven.apellido}`} />
-              <InfoRow label="Edad" value={`${selectedJoven.edad} años`} />
-              <InfoRow label="Dirección" value={selectedJoven.direccion} />
-              <InfoRow label="WhatsApp" value={selectedJoven.whatsapp} />
-              <InfoRow label="Redes sociales" value={selectedJoven.redesSociales} />
-              <InfoRow label="Fecha de registro" value={selectedJoven.fechaRegistro} />
-            </div>
+          {selectedJoven && (
+            <div className="space-y-4">
+              <div className="space-y-2 text-sm">
+                <InfoRow label="Nombre completo" value={`${selectedJoven.nombre} ${selectedJoven.apellido}`} />
+                <InfoRow label="Edad" value={`${selectedJoven.edad} años`} />
+                <InfoRow label="Dirección" value={selectedJoven.direccion} />
+                <InfoRow label="WhatsApp" value={selectedJoven.whatsapp} />
+                <InfoRow label="Redes sociales" value={selectedJoven.redes_sociales} />
+                <InfoRow label="Fecha de registro" value={selectedJoven.fecha_registro} />
+              </div>
 
-            <span className="mb-4 inline-block rounded-full bg-primary px-3 py-1 text-xs font-bold text-primary-foreground">
-              {selectedJoven.totalAsistencias} asistencias totales
-            </span>
+              <span className="inline-block rounded-full bg-primary px-3 py-1 text-xs font-bold text-primary-foreground">
+                {selectedJoven.totalAsistencias} asistencias totales
+              </span>
 
-            <h3 className="mb-2 text-sm font-semibold text-foreground">Historial de asistencia</h3>
-            <div className="max-h-40 overflow-y-auto rounded-lg border border-border">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="border-b border-border bg-muted/50">
-                    <th className="px-3 py-2 font-medium text-muted-foreground">Actividad</th>
-                    <th className="px-3 py-2 font-medium text-muted-foreground">Fecha</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {mockHistorialAsistencia.map((h, i) => (
-                    <tr key={i} className="border-b border-border last:border-0">
-                      <td className="px-3 py-2 text-foreground">{h.actividad}</td>
-                      <td className="px-3 py-2 tabular-nums text-muted-foreground">{h.fecha}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div>
+                <h3 className="mb-2 text-sm font-semibold text-foreground">Historial de asistencia</h3>
+                <div className="max-h-40 overflow-y-auto rounded-lg border border-border">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/50">
+                        <th className="px-3 py-2 font-medium text-muted-foreground">Actividad</th>
+                        <th className="px-3 py-2 font-medium text-muted-foreground">Fecha</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {historialSeleccionado.map((h, i) => (
+                        <tr key={i} className="border-b border-border last:border-0">
+                          <td className="px-3 py-2 text-foreground">{getActividadNombre(h.actividad_id)}</td>
+                          <td className="px-3 py-2 tabular-nums text-muted-foreground">{h.fecha}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {historialSeleccionado.length === 0 && (
+                    <div className="p-3 text-center text-muted-foreground text-xs">No hay asistencias registradas</div>
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
 
-const InfoRow = ({ label, value }: { label: string; value: string }) => (
+const InfoRow = ({ label, value }: { label: string; value: string | undefined }) => (
   <div className="flex justify-between">
     <span className="text-muted-foreground">{label}</span>
     <span className="font-medium text-foreground">{value || '—'}</span>

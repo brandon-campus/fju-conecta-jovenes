@@ -1,54 +1,114 @@
-import { useState } from 'react';
-import { Plus, Pencil, X } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Plus, Pencil, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { mockActividades, type Actividad } from '@/lib/mockData';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { supabase } from '@/lib/supabase';
+import { toast } from 'sonner';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import * as z from 'zod';
+
+const formSchema = z.object({
+  nombre: z.string().min(2, 'El nombre es obligatorio'),
+  tipo: z.string().optional(),
+  descripcion: z.string().optional()
+});
+
+type FormValues = z.infer<typeof formSchema>;
+type Actividad = { id: string; nombre: string; tipo: string; descripcion: string; activa: boolean };
 
 const Actividades = () => {
-  const [actividades, setActividades] = useState<Actividad[]>(mockActividades);
+  const [actividades, setActividades] = useState<Actividad[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ nombre: '', tipo: '', descripcion: '' });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const toggleActiva = (id: string) => {
-    setActividades(prev => prev.map(a => a.id === id ? { ...a, activa: !a.activa } : a));
+  const { register, handleSubmit, formState: { errors }, reset } = useForm<FormValues>({
+    resolver: zodResolver(formSchema),
+    defaultValues: { nombre: '', tipo: '', descripcion: '' }
+  });
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const { data } = await supabase.from('actividades').select('*').order('created_at', { ascending: true });
+      if (data) setActividades(data);
+    };
+    fetchData();
+  }, []);
+
+  const toggleActiva = async (a: Actividad) => {
+    const newVal = !a.activa;
+    const { error } = await supabase.from('actividades').update({ activa: newVal }).eq('id', a.id);
+    if (!error) {
+      setActividades(prev => prev.map(act => act.id === a.id ? { ...act, activa: newVal } : act));
+      toast.success('Estado actualizado');
+    } else {
+      toast.error('Error al actualizar');
+    }
   };
 
   const openEdit = (a: Actividad) => {
-    setForm({ nombre: a.nombre, tipo: a.tipo, descripcion: a.descripcion });
+    reset({ nombre: a.nombre, tipo: a.tipo || '', descripcion: a.descripcion || '' });
     setEditingId(a.id);
     setShowForm(true);
   };
 
   const openNew = () => {
-    setForm({ nombre: '', tipo: '', descripcion: '' });
+    reset({ nombre: '', tipo: '', descripcion: '' });
     setEditingId(null);
     setShowForm(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.nombre.trim()) return;
+  const onSubmit = async (data: FormValues) => {
+    setIsSubmitting(true);
+    
     if (editingId) {
-      setActividades(prev => prev.map(a => a.id === editingId ? { ...a, ...form } : a));
+      const { error } = await supabase.from('actividades').update({
+        nombre: data.nombre,
+        tipo: data.tipo,
+        descripcion: data.descripcion
+      }).eq('id', editingId);
+
+      if (!error) {
+        setActividades(prev => prev.map(a => a.id === editingId ? { ...a, ...data } : a));
+        toast.success('Actividad actualizada');
+        setShowForm(false);
+      } else {
+        toast.error('Error al actualizar');
+      }
     } else {
-      setActividades(prev => [...prev, { id: `a${Date.now()}`, ...form, activa: true }]);
+      const { data: newData, error } = await supabase.from('actividades').insert([{
+        nombre: data.nombre,
+        tipo: data.tipo,
+        descripcion: data.descripcion,
+        activa: true
+      }]).select().single();
+
+      if (!error && newData) {
+        setActividades(prev => [...prev, newData]);
+        toast.success('Actividad creada exitosamente');
+        setShowForm(false);
+      } else {
+        toast.error('Error al crear');
+      }
     }
-    setShowForm(false);
+    
+    setIsSubmitting(false);
   };
 
   return (
-    <div className="animate-fade-in px-4 pb-24 pt-6">
+    <div className="animate-fade-in px-4 pb-24 md:pb-8 pt-6 md:pt-10 md:max-w-3xl md:mx-auto">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-bold text-foreground">Actividades</h1>
         <Button onClick={openNew} className="touch-target gap-1.5">
-          <Plus size={18} /> Nueva actividad
+          <Plus size={18} /> Nueva
         </Button>
       </div>
 
       <div className="space-y-2">
-        {actividades.map(a => (
+        {actividades.map((a) => (
           <div key={a.id} className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3">
             <div className="flex-1">
               <p className="text-sm font-medium text-foreground">{a.nombre}</p>
@@ -57,7 +117,7 @@ const Actividades = () => {
             <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${a.activa ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>
               {a.activa ? 'Activa' : 'Inactiva'}
             </span>
-            <Switch checked={a.activa} onCheckedChange={() => toggleActiva(a.id)} />
+            <Switch checked={a.activa} onCheckedChange={() => toggleActiva(a)} />
             <button onClick={() => openEdit(a)} className="touch-target flex items-center justify-center text-muted-foreground hover:text-foreground">
               <Pencil size={16} />
             </button>
@@ -66,35 +126,33 @@ const Actividades = () => {
       </div>
 
       {/* Form modal */}
-      {showForm && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-foreground/40 sm:items-center" onClick={() => setShowForm(false)}>
-          <div className="w-full max-w-md animate-fade-in rounded-t-2xl bg-background p-5 shadow-xl sm:rounded-2xl" onClick={e => e.stopPropagation()}>
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-bold text-foreground">{editingId ? 'Editar actividad' : 'Nueva actividad'}</h2>
-              <Button variant="ghost" size="icon" onClick={() => setShowForm(false)}>
-                <X size={20} />
-              </Button>
+      <Dialog open={showForm} onOpenChange={(open) => { if (!isSubmitting) setShowForm(open); }}>
+        <DialogContent className="w-[calc(100%-2rem)] max-w-md rounded-2xl gap-4 p-5">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold">
+              {editingId ? 'Editar actividad' : 'Nueva actividad'}
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Nombre *</label>
+              <Input {...register('nombre')} className={`touch-target ${errors.nombre ? 'border-destructive ring-1 ring-destructive' : ''}`} />
+              {errors.nombre && <p className="text-xs text-destructive">{errors.nombre.message}</p>}
             </div>
-            <form onSubmit={handleSave} className="space-y-3">
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-foreground">Nombre *</label>
-                <Input value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} className="touch-target" required />
-              </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-foreground">Tipo</label>
-                <Input value={form.tipo} onChange={e => setForm(f => ({ ...f, tipo: e.target.value }))} className="touch-target" />
-              </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-foreground">Descripción</label>
-                <Input value={form.descripcion} onChange={e => setForm(f => ({ ...f, descripcion: e.target.value }))} className="touch-target" />
-              </div>
-              <Button type="submit" className="touch-target w-full text-base font-semibold">
-                {editingId ? 'Guardar cambios' : 'Crear actividad'}
-              </Button>
-            </form>
-          </div>
-        </div>
-      )}
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Tipo</label>
+              <Input {...register('tipo')} className="touch-target" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Descripción</label>
+              <Input {...register('descripcion')} className="touch-target" />
+            </div>
+            <Button type="submit" className="touch-target w-full text-base font-semibold" disabled={isSubmitting}>
+              {isSubmitting ? <Loader2 className="animate-spin" size={20} /> : (editingId ? 'Guardar cambios' : 'Crear actividad')}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

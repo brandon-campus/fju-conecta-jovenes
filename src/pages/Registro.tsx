@@ -1,52 +1,107 @@
-import { useState } from 'react';
-import { Search, UserPlus, AlertTriangle, CheckCircle, UserX } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Search, UserPlus, AlertTriangle, UserX, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { mockJovenes } from '@/lib/mockData';
+import { toast } from 'sonner';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import * as z from 'zod';
+import { supabase } from '@/lib/supabase';
+import PerfilJoven from '@/components/PerfilJoven';
+
+const formSchema = z.object({
+  nombre: z.string().min(2, 'El nombre es obligatorio'),
+  apellido: z.string().min(2, 'El apellido es obligatorio'),
+  edad: z.coerce.number().min(1, 'La edad es obligatoria'),
+  direccion: z.string().optional(),
+  whatsapp: z.string().optional(),
+  redesSociales: z.string().optional(),
+  esVisitante: z.boolean().default(false)
+});
+
+type FormValues = z.infer<typeof formSchema>;
+type Joven = { id: string; nombre: string; apellido: string; edad: number; fecha_registro: string };
 
 const Registro = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [showForm, setShowForm] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
-  const [form, setForm] = useState({ nombre: '', apellido: '', edad: '', direccion: '', whatsapp: '', redesSociales: '' });
-  const [errors, setErrors] = useState<Record<string, boolean>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [filtered, setFiltered] = useState<Joven[]>([]);
+  const [selectedJoven, setSelectedJoven] = useState<Joven | null>(null);
+  const [userId, setUserId] = useState<string>();
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUserId(session?.user?.id);
+    });
+  }, []);
+
+  const { register, handleSubmit, formState: { errors }, reset, watch } = useForm<FormValues>({
+    resolver: zodResolver(formSchema),
+    defaultValues: { nombre: '', apellido: '', direccion: '', whatsapp: '', redesSociales: '', esVisitante: false }
+  });
+
+  const watchedNombre = watch('nombre');
+  const watchedApellido = watch('apellido');
 
   const today = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
-  const filtered = searchQuery.length > 1
-    ? mockJovenes.filter(j =>
-        `${j.nombre} ${j.apellido}`.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : [];
+  useEffect(() => {
+    if (searchQuery.length < 2) {
+      setFiltered([]);
+      return;
+    }
+    const fetchJovenes = async () => {
+      const { data, error } = await supabase
+        .from('jovenes')
+        .select('*')
+        .or(`nombre.ilike.%${searchQuery}%,apellido.ilike.%${searchQuery}%`)
+        .limit(10);
+      
+      if (!error && data) {
+        setFiltered(data);
+      }
+    };
 
-  const possibleDuplicate = showForm && form.nombre && form.apellido && mockJovenes.some(
-    j => j.nombre.toLowerCase() === form.nombre.toLowerCase() && j.apellido.toLowerCase() === form.apellido.toLowerCase()
+    const delayDebounceFn = setTimeout(() => {
+      fetchJovenes();
+    }, 500);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [searchQuery]);
+
+  const possibleDuplicate = showForm && watchedNombre && watchedApellido && filtered.some(
+    j => j.nombre.toLowerCase() === watchedNombre.toLowerCase() && j.apellido.toLowerCase() === watchedApellido.toLowerCase()
   );
 
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    const newErrors: Record<string, boolean> = {};
-    if (!form.nombre.trim()) newErrors.nombre = true;
-    if (!form.apellido.trim()) newErrors.apellido = true;
-    if (!form.edad.trim() || isNaN(Number(form.edad))) newErrors.edad = true;
-    if (Object.keys(newErrors).length) { setErrors(newErrors); return; }
-    setErrors({});
+  const onSubmit = async (data: FormValues) => {
+    setIsSubmitting(true);
+    const { error } = await supabase.from('jovenes').insert([{
+      nombre: data.nombre,
+      apellido: data.apellido,
+      edad: data.edad,
+      direccion: data.direccion || null,
+      whatsapp: data.whatsapp || null,
+      redes_sociales: data.redesSociales || null,
+      es_visitante: data.esVisitante
+    }]);
+
+    setIsSubmitting(false);
+
+    if (error) {
+      toast.error('Error al registrar', { description: error.message });
+      return;
+    }
+
     setShowForm(false);
-    setShowSuccess(true);
-    setForm({ nombre: '', apellido: '', edad: '', direccion: '', whatsapp: '', redesSociales: '' });
-    setTimeout(() => setShowSuccess(false), 3000);
+    reset();
+    toast.success('Joven registrado exitosamente');
+    setSearchQuery('');
   };
 
   return (
-    <div className="animate-fade-in px-4 pb-24 pt-6">
+    <div className="animate-fade-in px-4 pb-24 md:pb-8 pt-6 md:pt-10 md:max-w-2xl md:mx-auto">
       <h1 className="mb-4 text-xl font-bold text-foreground">Registro de jóvenes</h1>
-
-      {showSuccess && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg bg-success/10 px-4 py-3 text-sm font-medium text-success">
-          <CheckCircle size={18} />
-          Joven registrado exitosamente
-        </div>
-      )}
 
       {/* Search */}
       <div className="relative mb-3">
@@ -63,10 +118,14 @@ const Registro = () => {
       {filtered.length > 0 && (
         <div className="mb-4 rounded-lg border border-border bg-card">
           {filtered.map(j => (
-            <div key={j.id} className="flex items-center justify-between border-b border-border px-4 py-3 last:border-0">
-              <div>
+            <div 
+              key={j.id} 
+              onClick={() => setSelectedJoven(j)}
+              className="flex items-center justify-between border-b border-border px-4 py-3 last:border-0 cursor-pointer hover:bg-muted/50 transition-colors"
+            >
+              <div className="flex-1">
                 <p className="text-sm font-medium text-foreground">{j.nombre} {j.apellido}</p>
-                <p className="text-xs text-muted-foreground">{j.edad} años · Registrado {j.fechaRegistro}</p>
+                <p className="text-xs text-muted-foreground">{j.edad} años · Registrado {j.fecha_registro || 'Recientemente'}</p>
               </div>
             </div>
           ))}
@@ -88,7 +147,7 @@ const Registro = () => {
 
       {/* Registration form */}
       {showForm && (
-        <form onSubmit={handleSave} className="mt-4 animate-fade-in space-y-3 rounded-xl border border-border bg-card p-4">
+        <form onSubmit={handleSubmit(onSubmit)} className="mt-4 animate-fade-in space-y-3 rounded-xl border border-border bg-card p-4">
           <h2 className="text-base font-semibold text-foreground">Nuevo joven</h2>
 
           {possibleDuplicate && (
@@ -98,12 +157,50 @@ const Registro = () => {
             </div>
           )}
 
-          <FieldInput label="Nombre *" value={form.nombre} error={errors.nombre} onChange={v => setForm(f => ({ ...f, nombre: v }))} />
-          <FieldInput label="Apellido *" value={form.apellido} error={errors.apellido} onChange={v => setForm(f => ({ ...f, apellido: v }))} />
-          <FieldInput label="Edad *" value={form.edad} error={errors.edad} onChange={v => setForm(f => ({ ...f, edad: v }))} type="number" />
-          <FieldInput label="Dirección" value={form.direccion} onChange={v => setForm(f => ({ ...f, direccion: v }))} />
-          <FieldInput label="WhatsApp" value={form.whatsapp} onChange={v => setForm(f => ({ ...f, whatsapp: v }))} />
-          <FieldInput label="Redes sociales" value={form.redesSociales} onChange={v => setForm(f => ({ ...f, redesSociales: v }))} placeholder="@usuario_ig / @usuario_tt" />
+          <div className="flex items-center space-x-2 pb-2">
+            <input 
+              type="checkbox" 
+              id="esVisitante" 
+              {...register('esVisitante')} 
+              className="h-4 w-4 rounded border-border text-primary focus:ring-primary" 
+            />
+            <label htmlFor="esVisitante" className="text-sm font-medium text-foreground">
+              Es un visitante (registro rápido)
+            </label>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-foreground">Nombre *</label>
+            <Input {...register('nombre')} className={`touch-target ${errors.nombre ? 'border-destructive ring-1 ring-destructive' : ''}`} />
+            {errors.nombre && <p className="text-xs text-destructive">{errors.nombre.message}</p>}
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-foreground">Apellido *</label>
+            <Input {...register('apellido')} className={`touch-target ${errors.apellido ? 'border-destructive ring-1 ring-destructive' : ''}`} />
+            {errors.apellido && <p className="text-xs text-destructive">{errors.apellido.message}</p>}
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-foreground">Edad *</label>
+            <Input type="number" {...register('edad')} className={`touch-target ${errors.edad ? 'border-destructive ring-1 ring-destructive' : ''}`} />
+            {errors.edad && <p className="text-xs text-destructive">{errors.edad.message}</p>}
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-foreground">Dirección</label>
+            <Input {...register('direccion')} className="touch-target" />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-foreground">WhatsApp</label>
+            <Input {...register('whatsapp')} className="touch-target" />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-foreground">Redes sociales</label>
+            <Input {...register('redesSociales')} placeholder="@usuario_ig / @usuario_tt" className="touch-target" />
+          </div>
 
           <div className="space-y-1">
             <label className="text-sm font-medium text-muted-foreground">Fecha de registro</label>
@@ -111,29 +208,24 @@ const Registro = () => {
           </div>
 
           <div className="flex gap-2 pt-2">
-            <Button type="button" variant="outline" className="touch-target flex-1" onClick={() => setShowForm(false)}>Cancelar</Button>
-            <Button type="submit" className="touch-target flex-1 text-base font-semibold">Guardar joven</Button>
+            <Button type="button" variant="outline" className="touch-target flex-1" onClick={() => { setShowForm(false); reset(); }} disabled={isSubmitting}>
+              Cancelar
+            </Button>
+            <Button type="submit" className="touch-target flex-1 text-base font-semibold" disabled={isSubmitting}>
+              {isSubmitting ? <Loader2 className="animate-spin" size={20} /> : 'Guardar joven'}
+            </Button>
           </div>
         </form>
       )}
+
+      <PerfilJoven 
+        joven={selectedJoven}
+        isOpen={!!selectedJoven}
+        onOpenChange={(open) => !open && setSelectedJoven(null)}
+        userId={userId}
+      />
     </div>
   );
 };
-
-const FieldInput = ({ label, value, onChange, error, type = 'text', placeholder }: {
-  label: string; value: string; onChange: (v: string) => void; error?: boolean; type?: string; placeholder?: string;
-}) => (
-  <div className="space-y-1">
-    <label className="text-sm font-medium text-foreground">{label}</label>
-    <Input
-      type={type}
-      value={value}
-      onChange={e => onChange(e.target.value)}
-      placeholder={placeholder}
-      className={`touch-target ${error ? 'border-destructive ring-1 ring-destructive' : ''}`}
-    />
-    {error && <p className="text-xs text-destructive">Este campo es obligatorio</p>}
-  </div>
-);
 
 export default Registro;
